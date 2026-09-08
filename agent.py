@@ -7,6 +7,7 @@ Run:  uv run python agent.py "What's the status of order A1002?"
 """
 
 import sys
+import os
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -70,6 +71,8 @@ options = ClaudeAgentOptions(
     allowed_tools=["mcp__orders__get_order_status", "Skill"],
     permission_mode="dontAsk",
     max_turns=MAX_TURNS,
+    cwd=os.path.dirname(os.path.abspath(__file__)),
+    setting_sources=["project"]
 )
 
 
@@ -97,7 +100,10 @@ async def main() -> None:
                 if isinstance(block, TextBlock):
                     print(block.text)
                 elif isinstance(block, ToolUseBlock):
-                    print(f"[tool] {block.name}({block.input})")
+                    # Only show our tool and the Skill invocation; hide SDK-internal
+                    # plumbing like ToolSearch.
+                    if block.name.startswith("mcp__") or block.name == "Skill":
+                        print(f"[tool] {block.name}({block.input})")
         elif isinstance(message, ResultMessage):
             print(f"\nterminal_reason: {message.terminal_reason}")
 
