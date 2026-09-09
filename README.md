@@ -1,3 +1,15 @@
+# Day 17 — CORE + APPLIED
+
+Two single-tool agents on the Claude Agent SDK. The SDK runs the agentic loop;
+the rules live in a Skill, not in the system prompt.
+
+- **CORE** (`agent.py`) — order-support agent; the exercise is finding why a
+  named Skill silently never loads.
+- **APPLIED** (`applied_agent.py`) — a personal diet-tracking agent, the same
+  pattern on a real task. [Jump to APPLIED](#day-17-applied--personal-diet-tracker).
+
+---
+
 # Day 17 CORE — Fix the Agent That Guesses
 
 A single-tool order-support agent built on the Claude Agent SDK. The SDK runs the
@@ -63,3 +75,73 @@ never discovered so a current working directory needs to be set (cwd) with the s
 production than a loud one (a crash)?**
 
 A silent failure in production does not tell anyone that it is ocurring so it may be duplicated for very long until somebody directly looks for it. A loud crash will immediately page an engineer and disallow further issues that may occur in a production setting. 
+
+---
+
+# Day 17 APPLIED — Personal Diet Tracker
+
+**One job:** *answer questions about my diet by looking up my daily goals and
+what I've eaten so far.* Same SDK pattern as CORE, one tool, fake data.
+
+## Files
+
+| Path | Role |
+|---|---|
+| `applied_agent.py` | The tool (`get_diet_status`), fake `GOALS` / `LOG` / `REFERENCE_PER_100G` data, the options block, the stream reader |
+| `.claude/skills/diet-coach/SKILL.md` | Rules: always look up, never guess goals/log/totals, convert to grams using the tool's reference table, admit when a food or date is missing |
+
+## Run
+
+```bash
+uv run python applied_agent.py "How am I tracking on calories today?"
+uv run python applied_agent.py "How many grams of chicken breast should I eat to hit my protein goal for the rest of today?"
+uv run python applied_agent.py "How many grams of salmon should I eat for dinner?"   # not in reference — must admit it
+```
+
+The one tool `get_diet_status(date)` returns, for a given day (default today):
+the calorie/protein goals, every logged meal, consumed totals, what remains, and
+reference macros per 100 g for chicken breast / rice / egg / almonds. The model
+does the arithmetic and the food conversion; it never sources the numbers
+itself.
+
+Logged days in the fake data: `2026-09-08` (today, partial) and `2026-09-07` (full).
+
+## Test run — observed behaviour
+
+| Question | Result |
+|---|---|
+| *How many grams of chicken breast to hit my protein goal for the rest of today?* | `loaded: True`, `[tool]` line, then **345 g** — 107 g protein remaining ÷ 31 g per 100 g, reference stated |
+| *How am I tracking on calories today?* | `[tool]` line, then "650 of 2200 logged, 1550 remaining" — grounded in the log |
+| *How many grams of salmon should I eat?* (no reference macros) | calls the tool, then "I don't have macro values for salmon" — **no invented numbers** |
+| *What did I eat on 2026-08-30?* (no log) | calls the tool, then "No diet log found for that date" |
+
+## Success criteria — met
+
+- Startup prints `Skill 'diet-coach' loaded: True`.
+- Both real questions produce a `[tool]` line and a grounded answer.
+- The salmon question produces an honest "I don't have that", no invention.
+- A teammate can read `diet-coach/SKILL.md` and know exactly what the agent does.
+
+## Part B — Self-Test (about this agent)
+
+**1. Which parts of your agent did the SDK run for you, and which did you have to
+declare yourself?**
+
+The SDK ran the whole loop: send the prompt to the model, detect the tool-use
+request, dispatch it to `get_diet_status`, feed the result back, decide when to
+stop (`max_turns` / no more tool calls), enforce `permission_mode` and the
+allow-list, discover the Skill and inject it into the system prompt, and carry
+the MCP messages back and forth. I declared: the tool function and its schema +
+description, the fake data, the `SKILL.md` rules, the `ClaudeAgentOptions` block
+(model + fallback, `mcp_servers`, `skills`, allow-list, `cwd`, `setting_sources`,
+`permission_mode`, `max_turns`), and the message-stream reader that prints the
+startup line, the `[tool]` lines, and `terminal_reason`.
+
+**2. If your teammate's agent started guessing, what is the first line of output
+you'd tell them to check, and why?**
+
+`Skill '<name>' loaded:`. If it says `False`, the Skill was named in `skills=[...]`
+but never discovered, so its "always look up / never guess" rules never reached
+the model — and nothing errored, because a skill filter that matches nothing is
+a normal outcome. Tell them to set `cwd` to the script's own directory and add
+`setting_sources=["project"]`.
